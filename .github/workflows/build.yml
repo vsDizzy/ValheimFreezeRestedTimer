@@ -9,10 +9,12 @@ on:
       - '.github/workflows/build.yml'
   workflow_dispatch:
 
+env:
+  PROJECT_NAME: Valheim.FreezeRestedTimer
+
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
@@ -33,16 +35,12 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Restore Dependencies via NuGet
+      - name: Restore Dependencies
         run: |
-          mkdir TmpPackages
-          cd TmpPackages
+          mkdir TmpPackages && cd TmpPackages
           cat << 'EOF' > TmpPackages.csproj
           <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup>
-              <TargetFramework>netstandard2.0</TargetFramework>
-              <AssetTargetFallback>net462;net46;net45;net40;net35</AssetTargetFallback>
-            </PropertyGroup>
+            <PropertyGroup><TargetFramework>netstandard2.0</TargetFramework></PropertyGroup>
             <ItemGroup>
               <PackageReference Include="Valheim.GameLibs" Version="0.202.14-r.0" />
               <PackageReference Include="BepInEx.Core" Version="5.4.21" />
@@ -52,7 +50,6 @@ jobs:
           </Project>
           EOF
           dotnet restore --source https://api.nuget.org/v3/index.json --source https://nuget.bepinex.dev/v3/index.json
-          cd ..
 
       - name: Compile Script to DLL
         run: |
@@ -66,47 +63,25 @@ jobs:
           UNITY_CORE_DLL=$(find "$NUGET_CACHE" -name "UnityEngine.CoreModule.dll" | head -n 1)
           UNITY_DLL=$(find "$NUGET_CACHE" -name "UnityEngine.dll" | head -n 1)
 
-          echo "=== Dependency Paths ==="
-          echo "Ref Dir:     $REF_DIR"
-          echo "Valheim API: $VALHEIM_DLL"
-          echo "Unity Core:  $UNITY_CORE_DLL"
-          echo "Unity Full:  $UNITY_DLL"
-          echo "Harmony:     $HARMONY_DLL"
-          echo "BepInEx:     $BEPINEX_DLL"
-          echo "=========================="
+          sed -i 's/${VERSION}/${{ steps.tag_version.outputs.new_tag }}/g' ${{ env.PROJECT_NAME }}.cs
 
-          dotnet "$CSC_PATH" /target:library /out:Valheim.FreezeRestedTimer.dll \
-            /reference:"$REF_DIR/netstandard.dll" \
-            /reference:"$REF_DIR/mscorlib.dll" \
-            /reference:"$REF_DIR/System.dll" \
-            /reference:"$REF_DIR/System.Core.dll" \
-            /reference:"$VALHEIM_DLL" \
-            /reference:"$UNITY_CORE_DLL" \
-            /reference:"$UNITY_DLL" \
-            /reference:"$HARMONY_DLL" \
-            /reference:"$BEPINEX_DLL" \
-            ValheimFreezeRestedTimer.cs
+          dotnet "$CSC_PATH" /target:library /out:${{ env.PROJECT_NAME }}.dll \
+            /reference:"$REF_DIR/netstandard.dll" /reference:"$REF_DIR/mscorlib.dll" \
+            /reference:"$VALHEIM_DLL" /reference:"$UNITY_CORE_DLL" /reference:"$UNITY_DLL" \
+            /reference:"$HARMONY_DLL" /reference:"$BEPINEX_DLL" \
+            *.cs
 
-      - name: Push to Orphan Branch
+      - name: Package for Release
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          git checkout --orphan release
-          git rm -rf . --cached
-
-          find . -maxdepth 1 -not -name 'Valheim.FreezeRestedTimer.dll' -not -name '.git' -not -name '.' -exec rm -rf {} +
-
-          git add Valheim.FreezeRestedTimer.dll
-          git commit -m "Build: Release ${{ steps.tag_version.outputs.new_tag }}"
-          git push origin release --force
+          mkdir release
+          mv ${{ env.PROJECT_NAME }}.dll release/
+          zip -j ${{ env.PROJECT_NAME }}.zip release/${{ env.PROJECT_NAME }}.dll
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag_version.outputs.new_tag }}
-          name: Release ${{ steps.tag_version.outputs.new_tag }}
-          generate_release_notes: true
-          files: Valheim.FreezeRestedTimer.dll
+        run: |
+          gh release create ${{ steps.tag_version.outputs.new_tag }} \
+            --title "Release ${{ steps.tag_version.outputs.new_tag }}" \
+            --generate-notes \
+            ${{ env.PROJECT_NAME }}.zip
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
