@@ -11,7 +11,7 @@ using BepInEx;
 
 namespace Valheim
 {
-    [BepInPlugin("com.vortex.valheim.freezerestedtimer", "Valheim Freeze Rested Timer", "1.0.0")]
+    [BepInPlugin("com.vortex.valheim.freezerestedtimer", "Valheim Freeze Rested Timer", "${VERSION}")]
     public class FreezeRestedTimerPlugin : BaseUnityPlugin
     {
         private void Awake()
