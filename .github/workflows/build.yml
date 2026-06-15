@@ -1,0 +1,83 @@
+name: Build and Deploy Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pre-calculate Next Version Tag
+        id: tag_version
+        uses: anothrNick/github-tag-action@1.71.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: true
+          DEFAULT_BUMP: patch
+          PRERELEASE: false
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Download Valheim Assemblies via NuGet
+        run: |
+          dotnet new classlib -n TmpPackages --no-restore
+          cd TmpPackages
+          # Added --prerelease flag to allow BepInEx tagged packages
+          dotnet add package Valheim.GameLibs --source https://nuget.bepinex.dev/v3/index.json --prerelease
+          dotnet add package HarmonyX --version 2.13.0
+          dotnet restore --packages ../Managed --source https://nuget.bepinex.dev/v3/index.json --source https://api.nuget.org/v3/index.json
+          cd .. && rm -rf TmpPackages
+
+      - name: Compile Script to DLL
+        run: |
+          CSC_PATH=$(find /usr/share/dotnet/sdk -name csc.dll | head -n 1)
+
+          VALHEIM_DLL=$(find Managed/valheim.gamelibs -name assembly_valheim_publicized.dll | head -n 1)
+          UNITY_DLL=$(find Managed/valheim.gamelibs -name UnityEngine.CoreModule.dll | head -n 1)
+          HARMONY_DLL=$(find Managed/harmonyx -name 0Harmony.dll | head -n 1)
+
+          REF_DIR=$(dirname $(find /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref -name System.Runtime.dll | head -n 1))
+
+          dotnet "$CSC_PATH" /target:library /out:ValheimFreezeRestedTimer.dll \
+            /reference:"$REF_DIR/System.Runtime.dll" \
+            /reference:"$REF_DIR/System.dll" \
+            /reference:"$VALHEIM_DLL" \
+            /reference:"$UNITY_DLL" \
+            /reference:"$HARMONY_DLL" \
+            ValheimFreezeRestedTimer.cs
+
+      - name: Push to Orphan Branch
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout --orphan release
+          git rm -rf . --cached
+
+          find . -maxdepth 1 -not -name 'ValheimFreezeRestedTimer.dll' -not -name '.' -exec rm -rf {} +
+
+          git add ValheimFreezeRestedTimer.dll
+          git commit -m "Build: Release ${{ steps.tag_version.outputs.new_tag }}"
+          git push origin release --force
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_version.outputs.new_tag }}
+          name: Release ${{ steps.tag_version.outputs.new_tag }}
+          generate_release_notes: true
+          files: ValheimFreezeRestedTimer.dll
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
