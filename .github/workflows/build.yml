@@ -1,0 +1,81 @@
+name: Build and Deploy Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pre-calculate Next Version Tag
+        id: tag_version
+        uses: anothrNick/github-tag-action@1.71.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: true
+          DEFAULT_BUMP: patch
+          PRERELEASE: false
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x' # Uses standard dotnet CLI available on Linux
+
+      - name: Download Valheim Stripped DLLs
+        run: |
+          mkdir -p Managed
+          # Request the raw media stream to force GitHub to resolve the Git LFS pointer to the actual binary data
+          curl -sL -H "Accept: application/vnd.github.v3.media" "https://api.github.com/repos/valheim-modding/Valheim-Stripped-Publicized-Assemblies/contents/assembly_valheim_publicized.dll?ref=master" -o "Managed/assembly_valheim.dll"
+          curl -sL -H "Accept: application/vnd.github.v3.media" "https://api.github.com/repos/valheim-modding/Valheim-Stripped-Publicized-Assemblies/contents/UnityEngine.CoreModule.dll?ref=master" -o "Managed/UnityEngine.CoreModule.dll"
+          curl -sL -H "Accept: application/vnd.github.v3.media" "https://api.github.com/repos/valheim-modding/Valheim-Stripped-Publicized-Assemblies/contents/0Harmony.dll?ref=master" -o "Managed/0Harmony.dll"
+
+      - name: Compile Script to DLL
+        run: |
+          # Locate Roslyn compiler
+          CSC_PATH=$(find /usr/share/dotnet/sdk -name csc.dll | head -n 1)
+
+          # Locate standard system runtime reference assemblies to fix CS0518
+          REF_DIR=$(dirname $(find /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref -name System.Runtime.dll | head -n 1))
+
+          # Execute cross-compilation with both Valheim and system references included
+          dotnet "$CSC_PATH" /target:library /out:ValheimFreezeRestedTimer.dll \
+            /reference:"$REF_DIR/System.Runtime.dll" \
+            /reference:"$REF_DIR/System.dll" \
+            /reference:Managed/assembly_valheim.dll \
+            /reference:Managed/UnityEngine.CoreModule.dll \
+            /reference:Managed/0Harmony.dll \
+            ValheimFreezeRestedTimer.cs
+
+      - name: Push to Orphan Branch
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout --orphan release
+          git rm -rf . --cached
+
+          # Standard Linux cleanup instead of PowerShell
+          find . -maxdepth 1 -not -name 'ValheimFreezeRestedTimer.dll' -not -name '.' -exec rm -rf {} +
+
+          git add ValheimFreezeRestedTimer.dll
+          git commit -m "Build: Release ${{ steps.tag_version.outputs.new_tag }}"
+          git push origin release --force
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_version.outputs.new_tag }}
+          name: Release ${{ steps.tag_version.outputs.new_tag }}
+          generate_release_notes: true
+          files: ValheimFreezeRestedTimer.dll
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
