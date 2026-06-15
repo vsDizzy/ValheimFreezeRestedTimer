@@ -75,6 +75,8 @@ jobs:
           echo "BepInEx:     $BEPINEX_DLL"
           echo "=========================="
 
+          sed -i 's/${VERSION}/${{ steps.tag_version.outputs.new_tag }}/g' ValheimFreezeRestedTimer.cs
+
           dotnet "$CSC_PATH" /target:library /out:Valheim.FreezeRestedTimer.dll \
             /reference:"$REF_DIR/netstandard.dll" \
             /reference:"$REF_DIR/mscorlib.dll" \
