@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 vsDizzy
 
-// #ref ${Managed}/assembly_valheim.dll
-// #ref ${Managed}/UnityEngine.CoreModule.dll
-
 using System;
 using HarmonyLib;
 using UnityEngine;
@@ -17,7 +14,7 @@ namespace Valheim
         private void Awake()
         {
             FreezeRestedTimer.Main();
-            Logger.LogInfo("Freeze Rested Timer (DLL) initialized!");
+            Logger.LogInfo("Freeze Rested Timer plugin initialized!");
         }
 
         private void OnDestroy()
@@ -47,15 +44,10 @@ namespace Valheim
         }
 
         [HarmonyPatch(typeof(Player), "UpdateModifiers")]
-        [HarmonyPrefix]
-        public static void PrefixModifiers(Player __instance)
+        [HarmonyPostfix]
+        public static void PostfixModifiers(Player __instance)
         {
-            if (__instance == null) return;
-
-            var seman = __instance.GetSEMan();
-            if (seman == null) return;
-
-            var statusEffects = seman.GetStatusEffects();
+            var statusEffects = __instance?.GetSEMan()?.GetStatusEffects();
             if (statusEffects == null) return;
 
             foreach (var statusEffect in statusEffects)
@@ -63,6 +55,7 @@ namespace Valheim
                 if (statusEffect != null && statusEffect.m_name == "$se_rested_name")
                 {
                     m_timeRef(statusEffect) = 0f;
+                    break;
                 }
             }
         }
