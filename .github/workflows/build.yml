@@ -1,36 +1,29 @@
-name: Build and Deploy Release
+name: Manual Build & Release
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - '**.cs'
-      - '.github/workflows/build.yml'
   workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'build'
+        type: choice
+        options:
+          - build
+          - re-build
 
 env:
   PROJECT_NAME: Valheim.FreezeRestedTimer
 
 jobs:
-  build:
+  build_process:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Pre-calculate Next Version Tag
-        id: tag_version
-        uses: anothrNick/github-tag-action@1.71.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WITH_V: true
-          DEFAULT_BUMP: patch
-          PRERELEASE: false
-
-      - name: Setup .NET SDK
+      - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
@@ -51,8 +44,40 @@ jobs:
           EOF
           dotnet restore --source https://api.nuget.org/v3/index.json --source https://nuget.bepinex.dev/v3/index.json
 
-      - name: Compile Script to DLL
+      - name: Resolve Versioning
+        id: versioning
         run: |
+          if [ "${{ github.event.inputs.action }}" == "re-build" ]; then
+            LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.0")
+            echo "new_tag=$LAST_TAG" >> $GITHUB_OUTPUT
+            echo "MODE=read_only" >> $GITHUB_ENV
+          else
+            echo "MODE=auto_bump" >> $GITHUB_ENV
+          fi
+
+      - name: Auto Bump Version
+        if: env.MODE == 'auto_bump'
+        id: auto_bump
+        uses: anothrNick/github-tag-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: true
+          DEFAULT_BUMP: patch
+
+      - name: Finalize Version
+        run: |
+          if [ "${{ env.MODE }}" == "auto_bump" ]; then
+            TAG="${{ steps.auto_bump.outputs.new_tag }}"
+          else
+            TAG="${{ steps.versioning.outputs.new_tag }}"
+          fi
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "CLEAN_VERSION=${TAG#v}" >> $GITHUB_ENV
+
+      - name: Compile
+        run: |
+          sed -i "s/\${VERSION}/${{ env.CLEAN_VERSION }}/g" ${{ env.PROJECT_NAME }}.cs
+
           CSC_PATH=$(find /usr/share/dotnet/sdk -name csc.dll | head -n 1)
           REF_DIR=$(dirname $(find /usr/share/dotnet/packs/NETStandard.Library.Ref -name netstandard.dll | head -n 1))
           NUGET_CACHE="/home/runner/.nuget/packages"
@@ -63,25 +88,23 @@ jobs:
           UNITY_CORE_DLL=$(find "$NUGET_CACHE" -name "UnityEngine.CoreModule.dll" | head -n 1)
           UNITY_DLL=$(find "$NUGET_CACHE" -name "UnityEngine.dll" | head -n 1)
 
-          sed -i 's/${VERSION}/${{ steps.tag_version.outputs.new_tag }}/g' ${{ env.PROJECT_NAME }}.cs
-
           dotnet "$CSC_PATH" /target:library /out:${{ env.PROJECT_NAME }}.dll \
             /reference:"$REF_DIR/netstandard.dll" /reference:"$REF_DIR/mscorlib.dll" \
             /reference:"$VALHEIM_DLL" /reference:"$UNITY_CORE_DLL" /reference:"$UNITY_DLL" \
             /reference:"$HARMONY_DLL" /reference:"$BEPINEX_DLL" \
             *.cs
 
-      - name: Package for Release
+      - name: Package
         run: |
           mkdir release
           mv ${{ env.PROJECT_NAME }}.dll release/
           zip -j ${{ env.PROJECT_NAME }}.zip release/${{ env.PROJECT_NAME }}.dll
 
-      - name: Create GitHub Release
+      - name: Release
         run: |
-          gh release create ${{ steps.tag_version.outputs.new_tag }} \
-            --title "Release ${{ steps.tag_version.outputs.new_tag }}" \
-            --generate-notes \
-            ${{ env.PROJECT_NAME }}.zip
+          if [ "${{ github.event.inputs.action }}" == "re-build" ]; then
+            gh release delete ${{ env.TAG }} --cleanup-tag -y || true
+          fi
+          gh release create ${{ env.TAG }} --title "Release ${{ env.TAG }}" --generate-notes ${{ env.PROJECT_NAME }}.zip
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

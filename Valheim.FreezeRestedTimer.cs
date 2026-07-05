@@ -47,8 +47,8 @@ namespace Valheim
         }
 
         [HarmonyPatch(typeof(Player), "UpdateModifiers")]
-        [HarmonyPrefix]
-        public static void PrefixModifiers(Player __instance)
+        [HarmonyPostfix]
+        public static void PostfixModifiers(Player __instance)
         {
             if (__instance == null) return;
 
@@ -63,6 +63,7 @@ namespace Valheim
                 if (statusEffect != null && statusEffect.m_name == "$se_rested_name")
                 {
                     m_timeRef(statusEffect) = 0f;
+                    break;
                 }
             }
         }
